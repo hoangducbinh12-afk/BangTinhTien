@@ -5,12 +5,10 @@ import json
 import numpy as np
 from PIL import Image
 
-# --- CẤU HÌNH QUY LUẬT (TỪ ẢNH MÀY CUNG CẤP) ---
-# Quy luật bóng âm dương
+# --- CẤU HÌNH QUY LUẬT ---
 BONG_DUONG = {0:5, 1:6, 2:7, 3:8, 4:9, 5:0, 6:1, 7:2, 8:3, 9:4}
 BONG_AM = {0:7, 1:4, 2:9, 3:6, 4:1, 5:8, 6:3, 7:0, 8:5, 9:2}
 
-# Quy ước tính hiệu
 HIEU_CHART = {0: [0,11,22,33,44,55,66,77,88,99], 1: [9,10,21,32,43,54,65,76,87,98],
               2: [8,19,20,31,42,53,64,75,86,97], 3: [7,18,29,30,41,52,63,74,85,96],
               4: [6,17,28,39,40,51,62,73,84,95], 5: [5,16,27,38,49,50,61,72,83,94],
@@ -31,24 +29,24 @@ def load_ocr():
 def get_hieu(n):
     return next((h for h, nums in HIEU_CHART.items() if n in nums), 0)
 
-# Logic Bảng A: Tiến và Bóng âm dương
 def build_bang_a(gdb_str):
-    digits = [int(d) for d in gdb_str]
+    """Xây dựng Bảng A: Tiến và Bóng âm dương (120 vị trí)"""
+    if not gdb_str: return [], []
+    digits = [int(d) for d in gdb_str[-5:]] # Lấy 5 số cuối để đảm bảo độ dài
     tien = [[(d + step) % 10 for d in digits] for step in range(10)]
-    
     bong = [digits]
     current = digits
     for i in range(9):
-        # Xen kẽ: Dương -> Âm -> Dương...
         current = [BONG_DUONG[d] for d in current] if i % 2 == 0 else [BONG_AM[d] for d in current]
         bong.append(current)
     return tien, bong
 
 def update_logic(gdb_full):
-    """Hàm lõi cập nhật điểm Bảng B và Lịch sử"""
+    """Hàm lõi cập nhật điểm Bảng B - FIX LỖI INDEXERROR"""
     if not gdb_full or len(gdb_full) < 5: return
     
-    if not st.session_state.db["bang_b_points"]:
+    # Đảm bảo Bảng B luôn có 120 vị trí
+    if not st.session_state.db["bang_b_points"] or len(st.session_state.db["bang_b_points"]) != 120:
         st.session_state.db["bang_b_points"] = [{"dau":1,"duoi":1,"tong":1,"hieu":1,"cham":1} for _ in range(120)]
     
     last_2 = int(gdb_full[-2:])
@@ -59,16 +57,21 @@ def update_logic(gdb_full):
     }
 
     rank_val, status_val = "N/A", "N/A"
+    
     if st.session_state.db.get("last_gdb_full"):
         t_old, b_old = build_bang_a(st.session_state.db["last_gdb_full"])
+        # Gom bảng A cũ (tối đa 120 vị trí)
         all_a_old = [item for sub in t_old for item in sub] + [item for sub in b_old for item in sub]
         pts_b = st.session_state.db["bang_b_points"]
         
-        # Tính toán Rank (Vị trí) trước khi cập nhật điểm mới
+        # Giới hạn an toàn để tránh IndexError
+        limit = min(len(all_a_old), len(pts_b))
+        
+        # 1. Tính toán Rank kỳ này dựa trên bảng điểm cũ
         list_c_tmp = []
         for n in range(10):
             row = {"S": n, "da": 0, "du": 0, "to": 0, "hi": 0, "ch": 0}
-            for i in range(120):
+            for i in range(limit):
                 if all_a_old[i] == n:
                     row["da"] += pts_b[i]["dau"]; row["du"] += pts_b[i]["duoi"]
                     row["to"] += pts_b[i]["tong"]; row["hi"] += pts_b[i]["hieu"]
@@ -79,21 +82,19 @@ def update_logic(gdb_full):
         for i in range(100):
             x, y = i // 10, i % 10
             score = list_c_tmp[x]["da"] + list_c_tmp[y]["du"] + list_c_tmp[(x+y)%10]["to"] + list_c_tmp[get_hieu(i)]["hi"]
-            # Công bằng cho số kép: x2 điểm chạm
             score += (list_c_tmp[x]["ch"] * 2) if x == y else (list_c_tmp[x]["ch"] + list_c_tmp[y]["ch"])
             dan_tmp.append({"SO": f"{i:02d}", "DIEM": score})
         
-        # Sắp xếp Cao -> Thấp
         df_rank = pd.DataFrame(dan_tmp).sort_values("DIEM", ascending=False).reset_index(drop=True)
         find_idx = df_rank[df_rank["SO"] == f"{last_2:02d}"].index
         if len(find_idx) > 0:
             rank_val = int(find_idx[0]) + 1
-            status_val = "A" if rank_val <= 79 else "T" # Phân loại A/T
+            status_val = "A" if rank_val <= 79 else "T"
 
-        # Cập nhật điểm tịnh tiến/reset cho Bảng B
-        for i in range(120):
+        # 2. Cập nhật tịnh tiến điểm cho Bảng B
+        for i in range(limit):
             val = all_a_old[i]
-            p = st.session_state.db["bang_b_points"][i]
+            p = pts_b[i]
             p["dau"] = 0 if val == target["dau"] else p["dau"] + 1
             p["duoi"] = 0 if val == target["duoi"] else p["duoi"] + 1
             p["tong"] = 0 if val == target["tong"] else p["tong"] + 1
@@ -117,11 +118,11 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    uploaded_file = st.file_uploader("📸 Load ảnh (Lẻ hoặc Bảng Tháng)", type=["png", "jpg", "jpeg"])
+    uploaded_file = st.file_uploader("📸 Load ảnh (Bảng Tháng/Lẻ)", type=["png", "jpg", "jpeg"])
     
-    if st.button("🔍 QUÉT ẢNH (Theo Cột)"):
+    if st.button("🔍 QUÉT ẢNH (Dọc cột)"):
         if uploaded_file:
-            with st.spinner("Đang quét từ trên xuống, hết cột mới sang cột sau..."):
+            with st.spinner("Đang xử lý ảnh..."):
                 results = load_ocr().readtext(np.array(Image.open(uploaded_file)))
                 found = []
                 for (bbox, text, prob) in results:
@@ -129,8 +130,10 @@ with st.sidebar:
                     if len(clean) >= 5:
                         found.append({"gdb": clean[:6], "y": bbox[0][1], "x": bbox[0][0]})
                 
-                # Sắp xếp: Ưu tiên X (cột) trước với threshold, sau đó đến Y (dòng)
+                # Sắp xếp: Ưu tiên X (cột) trước, sau đó mới đến Y (dòng từ trên xuống)
+                # Dùng ngưỡng 60px để gom cột chính xác
                 found.sort(key=lambda k: (k['x'] // 60, k['y']))
+                
                 for item in found: update_logic(item['gdb'])
                 st.success(f"Đã nạp {len(found)} kỳ!")
                 st.rerun()
@@ -146,11 +149,13 @@ if st.session_state.db.get("last_gdb_full"):
     all_a_now = [item for sub in tien_a for item in sub] + [item for sub in bong_a for item in sub]
     pts_b = st.session_state.db["bang_b_points"]
 
-    # BẢNG C: Gom điểm thành phần
+    # Đảm bảo an toàn độ dài cho bảng C
+    limit_now = min(len(all_a_now), len(pts_b))
+
     list_c = []
     for n in range(10):
         row = {"Số": n, "Đầu": 0, "Đuôi": 0, "Tổng": 0, "Hiệu": 0, "Chạm": 0}
-        for i in range(120):
+        for i in range(limit_now):
             if all_a_now[i] == n:
                 row["Đầu"] += pts_b[i]["dau"]; row["Đuôi"] += pts_b[i]["duoi"]
                 row["Tổng"] += pts_b[i]["tong"]; row["Hiệu"] += pts_b[i]["hieu"]
@@ -158,7 +163,6 @@ if st.session_state.db.get("last_gdb_full"):
         list_c.append(row)
     df_c = pd.DataFrame(list_c)
 
-    # BẢNG D: Tổng điểm 100 số (Cao -> Thấp)
     dan_d = []
     for i in range(100):
         x, y = i // 10, i % 10
@@ -168,23 +172,23 @@ if st.session_state.db.get("last_gdb_full"):
     df_dan = pd.DataFrame(dan_d).sort_values("DIEM", ascending=False)
 
     st.subheader(f"🛡️ GĐB Hiện Tại: {gdb_now}")
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
+    c_d1, c_d2 = st.columns(2)
+    with c_d1:
         n1 = st.number_input("Số quân Dàn 1:", 1, 100, 49)
         st.text_area("Copy Dàn 1:", " ".join(df_dan.head(n1)["SO"].tolist()), height=100)
-    with col_d2:
+    with c_d2:
         n2 = st.number_input("Số quân Dàn 2:", 1, 100, 64)
         st.text_area("Copy Dàn 2:", " ".join(df_dan.head(n2)["SO"].tolist()), height=100)
 
     tabs = st.tabs(["🕒 Lịch sử", "🗂️ Bảng C", "🎲 Bảng D", "📊 Bảng A"])
-    with tabs[0]: st.dataframe(pd.DataFrame(st.session_state.db["history"]), use_container_width=True)
+    with tabs[0]: st.dataframe(pd.DataFrame(st.session_state.db["history"]), use_container_width=True, hide_index=True)
     with tabs[1]: st.table(df_c)
     with tabs[2]: st.dataframe(df_dan.set_index("SO").T, use_container_width=True)
     with tabs[3]:
-        c_a1, c_a2 = st.columns(2)
-        c_a1.write("**Bảng Tiến:**"); c_a1.table(pd.DataFrame(tien_a))
-        c_a2.write("**Bảng Bóng:**"); c_a2.table(pd.DataFrame(bong_a))
+        c1, c2 = st.columns(2)
+        c1.write("**Bảng Tiến (A):**"); c1.table(pd.DataFrame(tien_a))
+        c2.write("**Bảng Bóng (A):**"); c2.table(pd.DataFrame(bong_a))
 
     st.sidebar.download_button("💾 Lưu file .Json", json.dumps(st.session_state.db), "bang_tinh_tien.json")
 else:
-    st.info("👋 Hãy load ảnh hoặc nhập GĐB để bắt đầu.")
+    st.info("👋 Hãy load ảnh bảng tháng hoặc nhập GĐB để bắt đầu.")
