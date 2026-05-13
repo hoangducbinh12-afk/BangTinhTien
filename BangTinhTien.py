@@ -3,9 +3,9 @@ import easyocr
 import pandas as pd
 import json
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageEnhance
 
-# --- CẤU HÌNH QUY LUẬT BÓNG & HIỆU ---
+# --- CẤU HÌNH QUY LUẬT BÓNG & HIỆU (THEO IMAGE_484E54.PNG) ---
 BONG_DUONG = {0:5, 1:6, 2:7, 3:8, 4:9, 5:0, 6:1, 7:2, 8:3, 9:4}
 BONG_AM = {0:7, 1:4, 2:9, 3:6, 4:1, 5:8, 6:3, 7:0, 8:5, 9:2}
 HIEU_CHART = {0: [0,11,22,33,44,55,66,77,88,99], 1: [9,10,21,32,43,54,65,76,87,98],
@@ -28,12 +28,13 @@ if 'db' not in st.session_state:
 
 @st.cache_resource
 def load_ocr():
-    return easyocr.Reader(['en'])
+    return easyocr.Reader(['en'], gpu=False)
 
 def get_hieu(n):
     return next((h for h, nums in HIEU_CHART.items() if n in nums), 0)
 
 def build_bang_a(gdb_str):
+    """Xây dựng Bảng A: Tiến và Bóng âm dương (120 vị trí)"""
     if not gdb_str: return [], []
     digits = [int(d) for d in gdb_str[-5:]] 
     tien = [[(d + step) % 10 for d in digits] for step in range(10)]
@@ -45,20 +46,30 @@ def build_bang_a(gdb_str):
     return tien, bong
 
 def update_logic(gdb_full):
-    if not gdb_full or len(gdb_full) < 5: return
+    """Hàm lõi cập nhật điểm Bảng B nối tiếp dữ liệu"""
+    gdb_clean = "".join([d for d in gdb_full if d.isdigit()])
+    if len(gdb_clean) > 6: gdb_clean = gdb_clean[-6:]
+    if len(gdb_clean) < 5: return
+
+    # Khởi tạo hoặc duy trì 120 vị trí điểm
     if not st.session_state.db["bang_b_points"] or len(st.session_state.db["bang_b_points"]) != 120:
         st.session_state.db["bang_b_points"] = [{"dau":1,"duoi":1,"tong":1,"hieu":1,"cham":1} for _ in range(120)]
     
-    last_2 = int(gdb_full[-2:])
-    target = {"dau": int(gdb_full[-2]), "duoi": int(gdb_full[-1]), "tong": (int(gdb_full[-2]) + int(gdb_full[-1])) % 10, "hieu": get_hieu(last_2), "cham": [int(gdb_full[-2]), int(gdb_full[-1])]}
+    last_2 = int(gdb_clean[-2:])
+    target = {
+        "dau": int(gdb_clean[-2]), "duoi": int(gdb_clean[-1]),
+        "tong": (int(gdb_clean[-2]) + int(gdb_clean[-1])) % 10,
+        "hieu": get_hieu(last_2), "cham": [int(gdb_clean[-2]), int(gdb_clean[-1])]
+    }
+
     rank_val, status_val = "N/A", "N/A"
-    
     if st.session_state.db.get("last_gdb_full"):
         t_old, b_old = build_bang_a(st.session_state.db["last_gdb_full"])
         all_a_old = [item for sub in t_old for item in sub] + [item for sub in b_old for item in sub]
         pts_b = st.session_state.db["bang_b_points"]
         limit = min(len(all_a_old), len(pts_b))
         
+        # Tính Rank (Vị trí) trước khi reset
         list_c_tmp = []
         for n in range(10):
             row = {"S": n, "da": 0, "du": 0, "to": 0, "hi": 0, "ch": 0}
@@ -80,6 +91,7 @@ def update_logic(gdb_full):
             rank_val = int(find_idx[0]) + 1
             status_val = "A" if rank_val <= 79 else "T"
 
+        # Cập nhật điểm tịnh tiến
         for i in range(limit):
             val = all_a_old[i]
             p = pts_b[i]
@@ -89,25 +101,49 @@ def update_logic(gdb_full):
             p["cham"] = 0 if val in target["cham"] else p["cham"] + 1
             if p["cham"] > st.session_state.db["max_scores"]["cham"]: st.session_state.db["max_scores"]["cham"] = p["cham"]
 
-    st.session_state.db["last_gdb_full"] = gdb_full
-    st.session_state.db["history"].insert(0, {"Số về": f"{last_2:02d}", "Vị trí": rank_val, "Trạng thái": status_val, "GĐB Full": gdb_full})
+    st.session_state.db["last_gdb_full"] = gdb_clean
+    st.session_state.db["history"].insert(0, {"Số về": f"{last_2:02d}", "Vị trí": rank_val, "Trạng thái": status_val, "GĐB Full": gdb_clean})
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ ĐIỀU KHIỂN")
     uploaded_json = st.file_uploader("📂 Load file .Json", type=["json"])
-    if uploaded_json: st.session_state.db = json.load(uploaded_json)
+    if uploaded_json:
+        st.session_state.db = json.load(uploaded_json)
+        st.success("Đã nạp dữ liệu!")
+
     manual_gdb = st.text_input("✍️ Nhập tay GĐB:")
-    if st.button("➕ Thêm thủ công"): update_logic(manual_gdb); st.rerun()
+    if st.button("➕ Thêm thủ công"):
+        update_logic(manual_gdb)
+        st.rerun()
+
     st.divider()
-    uploaded_file = st.file_uploader("📸 Load ảnh bảng tháng", type=["png", "jpg", "jpeg"])
-    if st.button("🔍 QUÉT ẢNH (Dọc cột)"):
+    uploaded_file = st.file_uploader("📸 Load ảnh mới (Bảng tháng)", type=["png", "jpg", "jpeg"])
+    
+    if st.button("🔍 QUÉT ẢNH (DỌC CỘT - NỐI TIẾP)"):
         if uploaded_file:
-            results = load_ocr().readtext(np.array(Image.open(uploaded_file)))
-            found = [{"gdb": "".join([d for d in t if d.isdigit()])[:6], "y": b[0][1], "x": b[0][0]} for (b, t, p) in results if len("".join([d for d in t if d.isdigit()])) >= 5]
-            found.sort(key=lambda k: (k['x'] // 60, k['y']))
-            for item in found: update_logic(item['gdb'])
-            st.rerun()
+            with st.spinner("Đang xử lý ảnh theo cột..."):
+                img = Image.open(uploaded_file).convert('L')
+                img = ImageEnhance.Contrast(img).enhance(2.0)
+                results = load_ocr().readtext(np.array(img))
+                
+                found = []
+                for (bbox, text, prob) in results:
+                    clean = "".join([d for d in text if d.isdigit()])
+                    if len(clean) >= 5:
+                        # Chỉ lấy 6 số cuối để tránh rác
+                        gdb_val = clean[-6:] if len(clean) >= 6 else clean
+                        found.append({"gdb": gdb_val, "y": bbox[0][1], "x": bbox[0][0]})
+                
+                # SẮP XẾP CHUẨN: X trước (Cột), Y sau (Dòng từ trên xuống)
+                # Dùng threshold 70px để gom cột chính xác
+                found.sort(key=lambda k: (k['x'] // 70, k['y']))
+                
+                for item in found:
+                    update_logic(item['gdb'])
+                st.success(f"Đã nạp nối tiếp {len(found)} kỳ GĐB!")
+                st.rerun()
+
     if st.button("❌ RESET DỮ LIỆU"):
         st.session_state.db = {"bang_b_points": [], "last_gdb_full": "", "history": [], "max_scores": {"dau": 0, "duoi": 0, "tong": 0, "hieu": 0, "cham": 0}}
         st.rerun()
@@ -139,17 +175,13 @@ if st.session_state.db.get("last_gdb_full"):
 
     st.subheader(f"🛡️ GĐB Hiện Tại: {gdb_now}")
     c1, c2 = st.columns(2)
-    with c1:
-        n1 = st.number_input("Số quân Dàn 1:", 1, 100, 49)
-        st.text_area("Dàn 1:", " ".join(df_dan.head(n1)["SO"].tolist()), height=100)
-    with c2:
-        n2 = st.number_input("Số quân Dàn 2:", 1, 100, 64)
-        st.text_area("Dàn 2:", " ".join(df_dan.head(n2)["SO"].tolist()), height=100)
+    with c1: st.text_area("Dàn 1 (49 số):", " ".join(df_dan.head(49)["SO"].tolist()), height=100)
+    with c2: st.text_area("Dàn 2 (64 số):", " ".join(df_dan.head(64)["SO"].tolist()), height=100)
 
     tabs = st.tabs(["🕒 Lịch sử", "🎲 Bảng B (Điểm & Thống kê)", "🗂️ Bảng C", "🎲 Bảng D", "📊 Bảng A"])
     
     with tabs[1]:
-        # BẢNG THỐNG KÊ TRẠNG THÁI CAO ĐIỂM NHẤT (IMAGE_1E7CEF.JPG)
+        # BẢNG THỐNG KÊ TRẠNG THÁI CAO ĐIỂM NHẤT
         st.subheader("📊 Thống kê Trạng thái Cao điểm nhất")
         stats_data = []
         labels = ["Cao diem nhat", "Cao diem nhi", "Cao diem ba", "Cao diem bon"]
@@ -161,7 +193,7 @@ if st.session_state.db.get("last_gdb_full"):
                 sorted_idx = sorted(range(limit_now), key=lambda k: pts_b[k][c], reverse=True)
                 top_vtri = sorted_idx[idx]
                 score = pts_b[top_vtri][c]
-                val_a = all_a_now[top_vtri] # Lấy số hiện tại ở vị trí đó trong Bảng A
+                val_a = all_a_now[top_vtri]
                 row_stat[c.upper()] = f"{score} (VT:{top_vtri+1}, Số:{val_a})"
             stats_data.append(row_stat)
         
@@ -182,4 +214,4 @@ if st.session_state.db.get("last_gdb_full"):
         ca1, ca2 = st.columns(2); ca1.table(pd.DataFrame(tien_a)); ca2.table(pd.DataFrame(bong_a))
 
     st.sidebar.download_button("💾 Lưu file .Json", json.dumps(st.session_state.db), "bang_tinh_tien.json")
-else: st.info("👋 Hãy load ảnh hoặc nhập GĐB để bắt đầu.")
+else: st.info("👋 Hãy load ảnh bảng tháng hoặc nhập GĐB để bắt đầu.")
