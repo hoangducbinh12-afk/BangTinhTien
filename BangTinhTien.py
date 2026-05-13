@@ -32,7 +32,7 @@ def get_hieu(n):
 def build_bang_a(gdb_str):
     """Xây dựng Bảng A: Tiến và Bóng âm dương (120 vị trí)"""
     if not gdb_str: return [], []
-    digits = [int(d) for d in gdb_str[-5:]] # Lấy 5 số cuối để đảm bảo độ dài
+    digits = [int(d) for d in gdb_str[-5:]] 
     tien = [[(d + step) % 10 for d in digits] for step in range(10)]
     bong = [digits]
     current = digits
@@ -42,10 +42,9 @@ def build_bang_a(gdb_str):
     return tien, bong
 
 def update_logic(gdb_full):
-    """Hàm lõi cập nhật điểm Bảng B - FIX LỖI INDEXERROR"""
+    """Hàm lõi cập nhật điểm Bảng B"""
     if not gdb_full or len(gdb_full) < 5: return
     
-    # Đảm bảo Bảng B luôn có 120 vị trí
     if not st.session_state.db["bang_b_points"] or len(st.session_state.db["bang_b_points"]) != 120:
         st.session_state.db["bang_b_points"] = [{"dau":1,"duoi":1,"tong":1,"hieu":1,"cham":1} for _ in range(120)]
     
@@ -60,11 +59,8 @@ def update_logic(gdb_full):
     
     if st.session_state.db.get("last_gdb_full"):
         t_old, b_old = build_bang_a(st.session_state.db["last_gdb_full"])
-        # Gom bảng A cũ (tối đa 120 vị trí)
         all_a_old = [item for sub in t_old for item in sub] + [item for sub in b_old for item in sub]
         pts_b = st.session_state.db["bang_b_points"]
-        
-        # Giới hạn an toàn để tránh IndexError
         limit = min(len(all_a_old), len(pts_b))
         
         # 1. Tính toán Rank kỳ này dựa trên bảng điểm cũ
@@ -91,7 +87,7 @@ def update_logic(gdb_full):
             rank_val = int(find_idx[0]) + 1
             status_val = "A" if rank_val <= 79 else "T"
 
-        # 2. Cập nhật tịnh tiến điểm cho Bảng B
+        # 2. Cập nhật điểm cho Bảng B
         for i in range(limit):
             val = all_a_old[i]
             p = pts_b[i]
@@ -104,7 +100,7 @@ def update_logic(gdb_full):
     st.session_state.db["last_gdb_full"] = gdb_full
     st.session_state.db["history"].insert(0, {"Số về": f"{last_2:02d}", "Vị trí": rank_val, "Trạng thái": status_val, "GĐB Full": gdb_full})
 
-# --- SIDEBAR & ĐIỀU KHIỂN ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ ĐIỀU KHIỂN")
     uploaded_json = st.file_uploader("📂 Load file .Json", type=["json"])
@@ -129,11 +125,7 @@ with st.sidebar:
                     clean = "".join([d for d in text if d.isdigit()])
                     if len(clean) >= 5:
                         found.append({"gdb": clean[:6], "y": bbox[0][1], "x": bbox[0][0]})
-                
-                # Sắp xếp: Ưu tiên X (cột) trước, sau đó mới đến Y (dòng từ trên xuống)
-                # Dùng ngưỡng 60px để gom cột chính xác
                 found.sort(key=lambda k: (k['x'] // 60, k['y']))
-                
                 for item in found: update_logic(item['gdb'])
                 st.success(f"Đã nạp {len(found)} kỳ!")
                 st.rerun()
@@ -148,10 +140,9 @@ if st.session_state.db.get("last_gdb_full"):
     tien_a, bong_a = build_bang_a(gdb_now)
     all_a_now = [item for sub in tien_a for item in sub] + [item for sub in bong_a for item in sub]
     pts_b = st.session_state.db["bang_b_points"]
-
-    # Đảm bảo an toàn độ dài cho bảng C
     limit_now = min(len(all_a_now), len(pts_b))
 
+    # BẢNG C
     list_c = []
     for n in range(10):
         row = {"Số": n, "Đầu": 0, "Đuôi": 0, "Tổng": 0, "Hiệu": 0, "Chạm": 0}
@@ -163,6 +154,7 @@ if st.session_state.db.get("last_gdb_full"):
         list_c.append(row)
     df_c = pd.DataFrame(list_c)
 
+    # BẢNG D
     dan_d = []
     for i in range(100):
         x, y = i // 10, i % 10
@@ -180,11 +172,32 @@ if st.session_state.db.get("last_gdb_full"):
         n2 = st.number_input("Số quân Dàn 2:", 1, 100, 64)
         st.text_area("Copy Dàn 2:", " ".join(df_dan.head(n2)["SO"].tolist()), height=100)
 
-    tabs = st.tabs(["🕒 Lịch sử", "🗂️ Bảng C", "🎲 Bảng D", "📊 Bảng A"])
-    with tabs[0]: st.dataframe(pd.DataFrame(st.session_state.db["history"]), use_container_width=True, hide_index=True)
-    with tabs[1]: st.table(df_c)
-    with tabs[2]: st.dataframe(df_dan.set_index("SO").T, use_container_width=True)
-    with tabs[3]:
+    # TỔ CHỨC CÁC TABS ĐỂ THEO DÕI
+    tabs = st.tabs(["🕒 Lịch sử", "🎲 Bảng B (Điểm vị trí)", "🗂️ Bảng C (Gom điểm)", "🎲 Bảng D (Ma trận)", "📊 Bảng A"])
+    
+    with tabs[0]: 
+        st.dataframe(pd.DataFrame(st.session_state.db["history"]), use_container_width=True, hide_index=True)
+    
+    with tabs[1]:
+        st.subheader("Bảng B: Theo dõi điểm của 120 vị trí")
+        # Chuẩn bị dữ liệu Bảng B để hiển thị
+        display_b = []
+        for i in range(limit_now):
+            display_b.append({
+                "Vị trí": i + 1,
+                "Số hiện tại (Bảng A)": all_a_now[i],
+                "Điểm Đầu": pts_b[i]["dau"],
+                "Điểm Đuôi": pts_b[i]["duoi"],
+                "Điểm Tổng": pts_b[i]["tong"],
+                "Điểm Hiệu": pts_b[i]["hieu"],
+                "Điểm Chạm": pts_b[i]["cham"]
+            })
+        st.dataframe(pd.DataFrame(display_b), use_container_width=True, hide_index=True)
+        st.info("💡 Điểm về 0 nghĩa là vị trí đó vừa nổ thuộc tính tương ứng ở kỳ vừa rồi.")
+
+    with tabs[2]: st.table(df_c)
+    with tabs[3]: st.dataframe(df_dan.set_index("SO").T, use_container_width=True)
+    with tabs[4]:
         c1, c2 = st.columns(2)
         c1.write("**Bảng Tiến (A):**"); c1.table(pd.DataFrame(tien_a))
         c2.write("**Bảng Bóng (A):**"); c2.table(pd.DataFrame(bong_a))
