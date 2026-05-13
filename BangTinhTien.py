@@ -34,7 +34,6 @@ def get_hieu(n):
     return next((h for h, nums in HIEU_CHART.items() if n in nums), 0)
 
 def build_bang_a(gdb_str):
-    """Xây dựng Bảng A: Tiến và Bóng âm dương (120 vị trí)"""
     if not gdb_str: return [], []
     digits = [int(d) for d in gdb_str[-5:]] 
     tien = [[(d + step) % 10 for d in digits] for step in range(10)]
@@ -46,19 +45,12 @@ def build_bang_a(gdb_str):
     return tien, bong
 
 def update_logic(gdb_full):
-    """Hàm lõi cập nhật điểm Bảng B và tính Rank - Đã fix NameError"""
     if not gdb_full or len(gdb_full) < 5: return
-    
     if not st.session_state.db["bang_b_points"] or len(st.session_state.db["bang_b_points"]) != 120:
         st.session_state.db["bang_b_points"] = [{"dau":1,"duoi":1,"tong":1,"hieu":1,"cham":1} for _ in range(120)]
     
     last_2 = int(gdb_full[-2:])
-    target = {
-        "dau": int(gdb_full[-2]), "duoi": int(gdb_full[-1]),
-        "tong": (int(gdb_full[-2]) + int(gdb_full[-1])) % 10,
-        "hieu": get_hieu(last_2), "cham": [int(gdb_full[-2]), int(gdb_full[-1])]
-    }
-
+    target = {"dau": int(gdb_full[-2]), "duoi": int(gdb_full[-1]), "tong": (int(gdb_full[-2]) + int(gdb_full[-1])) % 10, "hieu": get_hieu(last_2), "cham": [int(gdb_full[-2]), int(gdb_full[-1])]}
     rank_val, status_val = "N/A", "N/A"
     
     if st.session_state.db.get("last_gdb_full"):
@@ -67,15 +59,12 @@ def update_logic(gdb_full):
         pts_b = st.session_state.db["bang_b_points"]
         limit = min(len(all_a_old), len(pts_b))
         
-        # 1. Tính Rank dựa trên bảng điểm cũ
         list_c_tmp = []
         for n in range(10):
             row = {"S": n, "da": 0, "du": 0, "to": 0, "hi": 0, "ch": 0}
             for i in range(limit):
                 if all_a_old[i] == n:
-                    row["da"] += pts_b[i]["dau"]; row["du"] += pts_b[i]["duoi"]
-                    row["to"] += pts_b[i]["tong"]; row["hi"] += pts_b[i]["hieu"]
-                    row["ch"] += pts_b[i]["cham"]
+                    row["da"] += pts_b[i]["dau"]; row["du"] += pts_b[i]["duoi"]; row["to"] += pts_b[i]["tong"]; row["hi"] += pts_b[i]["hieu"]; row["ch"] += pts_b[i]["cham"]
             list_c_tmp.append(row)
         
         dan_tmp = []
@@ -91,18 +80,14 @@ def update_logic(gdb_full):
             rank_val = int(find_idx[0]) + 1
             status_val = "A" if rank_val <= 79 else "T"
 
-        # 2. Cập nhật điểm và Max Điểm Lịch Sử
         for i in range(limit):
             val = all_a_old[i]
             p = pts_b[i]
             for key in ["dau", "duoi", "tong", "hieu"]:
                 p[key] = 0 if val == target[key] else p[key] + 1
-                if p[key] > st.session_state.db["max_scores"][key]: 
-                    st.session_state.db["max_scores"][key] = p[key]
-            
+                if p[key] > st.session_state.db["max_scores"][key]: st.session_state.db["max_scores"][key] = p[key]
             p["cham"] = 0 if val in target["cham"] else p["cham"] + 1
-            if p["cham"] > st.session_state.db["max_scores"]["cham"]: 
-                st.session_state.db["max_scores"]["cham"] = p["cham"]
+            if p["cham"] > st.session_state.db["max_scores"]["cham"]: st.session_state.db["max_scores"]["cham"] = p["cham"]
 
     st.session_state.db["last_gdb_full"] = gdb_full
     st.session_state.db["history"].insert(0, {"Số về": f"{last_2:02d}", "Vị trí": rank_val, "Trạng thái": status_val, "GĐB Full": gdb_full})
@@ -111,34 +96,18 @@ def update_logic(gdb_full):
 with st.sidebar:
     st.header("⚙️ ĐIỀU KHIỂN")
     uploaded_json = st.file_uploader("📂 Load file .Json", type=["json"])
-    if uploaded_json:
-        st.session_state.db = json.load(uploaded_json)
-        st.success("Đã nạp dữ liệu!")
-
+    if uploaded_json: st.session_state.db = json.load(uploaded_json)
     manual_gdb = st.text_input("✍️ Nhập tay GĐB:")
-    if st.button("➕ Thêm thủ công"):
-        update_logic(manual_gdb)
-        st.rerun()
-
+    if st.button("➕ Thêm thủ công"): update_logic(manual_gdb); st.rerun()
     st.divider()
     uploaded_file = st.file_uploader("📸 Load ảnh bảng tháng", type=["png", "jpg", "jpeg"])
-    
     if st.button("🔍 QUÉT ẢNH (Dọc cột)"):
         if uploaded_file:
-            with st.spinner("Đang quét từ trên xuống dưới, hết cột mới sang cột sau..."):
-                results = load_ocr().readtext(np.array(Image.open(uploaded_file)))
-                found = []
-                for (bbox, text, prob) in results:
-                    clean = "".join([d for d in text if d.isdigit()])
-                    if len(clean) >= 5:
-                        found.append({"gdb": clean[:6], "y": bbox[0][1], "x": bbox[0][0]})
-                
-                # Sắp xếp: Ưu tiên X (cột) trước, sau đó mới đến Y (dòng)
-                found.sort(key=lambda k: (k['x'] // 60, k['y']))
-                for item in found: update_logic(item['gdb'])
-                st.success(f"Đã nạp {len(found)} kỳ!")
-                st.rerun()
-
+            results = load_ocr().readtext(np.array(Image.open(uploaded_file)))
+            found = [{"gdb": "".join([d for d in t if d.isdigit()])[:6], "y": b[0][1], "x": b[0][0]} for (b, t, p) in results if len("".join([d for d in t if d.isdigit()])) >= 5]
+            found.sort(key=lambda k: (k['x'] // 60, k['y']))
+            for item in found: update_logic(item['gdb'])
+            st.rerun()
     if st.button("❌ RESET DỮ LIỆU"):
         st.session_state.db = {"bang_b_points": [], "last_gdb_full": "", "history": [], "max_scores": {"dau": 0, "duoi": 0, "tong": 0, "hieu": 0, "cham": 0}}
         st.rerun()
@@ -151,19 +120,15 @@ if st.session_state.db.get("last_gdb_full"):
     pts_b = st.session_state.db["bang_b_points"]
     limit_now = min(len(all_a_now), len(pts_b))
 
-    # BẢNG C
     list_c = []
     for n in range(10):
         row = {"Số": n, "Đầu": 0, "Đuôi": 0, "Tổng": 0, "Hiệu": 0, "Chạm": 0}
         for i in range(limit_now):
             if all_a_now[i] == n:
-                row["Đầu"] += pts_b[i]["dau"]; row["Đuôi"] += pts_b[i]["duoi"]
-                row["Tổng"] += pts_b[i]["tong"]; row["Hiệu"] += pts_b[i]["hieu"]
-                row["Chạm"] += pts_b[i]["cham"]
+                row["Đầu"] += pts_b[i]["dau"]; row["Đuôi"] += pts_b[i]["duoi"]; row["Tổng"] += pts_b[i]["tong"]; row["Hiệu"] += pts_b[i]["hieu"]; row["Chạm"] += pts_b[i]["cham"]
         list_c.append(row)
     df_c = pd.DataFrame(list_c)
 
-    # BẢNG D
     dan_d = []
     for i in range(100):
         x, y = i // 10, i % 10
@@ -184,7 +149,7 @@ if st.session_state.db.get("last_gdb_full"):
     tabs = st.tabs(["🕒 Lịch sử", "🎲 Bảng B (Điểm & Thống kê)", "🗂️ Bảng C", "🎲 Bảng D", "📊 Bảng A"])
     
     with tabs[1]:
-        # BẢNG THỐNG KÊ TRẠNG THÁI
+        # BẢNG THỐNG KÊ TRẠNG THÁI CAO ĐIỂM NHẤT (IMAGE_1E7CEF.JPG)
         st.subheader("📊 Thống kê Trạng thái Cao điểm nhất")
         stats_data = []
         labels = ["Cao diem nhat", "Cao diem nhi", "Cao diem ba", "Cao diem bon"]
@@ -193,12 +158,13 @@ if st.session_state.db.get("last_gdb_full"):
         for idx, label in enumerate(labels):
             row_stat = {"TRANG THAI": label}
             for c in cols:
-                sorted_idx = sorted(range(len(pts_b)), key=lambda k: pts_b[k][c], reverse=True)
+                sorted_idx = sorted(range(limit_now), key=lambda k: pts_b[k][c], reverse=True)
                 top_vtri = sorted_idx[idx]
-                row_stat[c.upper()] = f"{pts_b[top_vtri][c]} (VT:{top_vtri+1})"
+                score = pts_b[top_vtri][c]
+                val_a = all_a_now[top_vtri] # Lấy số hiện tại ở vị trí đó trong Bảng A
+                row_stat[c.upper()] = f"{score} (VT:{top_vtri+1}, Số:{val_a})"
             stats_data.append(row_stat)
         
-        # Max Diem LS
         max_ls_row = {"TRANG THAI": "Max Diem LS"}
         for c in cols: max_ls_row[c.upper()] = st.session_state.db["max_scores"][c]
         stats_data.append(max_ls_row)
@@ -213,10 +179,7 @@ if st.session_state.db.get("last_gdb_full"):
     with tabs[2]: st.table(df_c)
     with tabs[3]: st.dataframe(df_dan.set_index("SO").T, use_container_width=True)
     with tabs[4]:
-        ca1, ca2 = st.columns(2)
-        ca1.write("**Bảng Tiến:**"); ca1.table(pd.DataFrame(tien_a))
-        ca2.write("**Bảng Bóng:**"); ca2.table(pd.DataFrame(bong_a))
+        ca1, ca2 = st.columns(2); ca1.table(pd.DataFrame(tien_a)); ca2.table(pd.DataFrame(bong_a))
 
     st.sidebar.download_button("💾 Lưu file .Json", json.dumps(st.session_state.db), "bang_tinh_tien.json")
-else:
-    st.info("👋 Hãy load ảnh hoặc nhập GĐB để bắt đầu.")
+else: st.info("👋 Hãy load ảnh hoặc nhập GĐB để bắt đầu.")
