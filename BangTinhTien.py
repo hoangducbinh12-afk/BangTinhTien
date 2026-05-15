@@ -74,7 +74,7 @@ def update_logic(gdb_full):
     st.session_state.db["last_gdb_full"] = gdb_clean
     st.session_state.db["history"].insert(0, {"Số về": f"{last_2:02d}", "Vị trí": rank_val, "Trạng thái": status_val, "GĐB Full": gdb_clean})
 
-# --- SIDEBAR & OCR CHỐNG NHẦM ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ ĐIỀU KHIỂN")
     uploaded_json = st.file_uploader("📂 Load file .Json", type=["json"])
@@ -82,29 +82,25 @@ with st.sidebar:
     manual_gdb = st.text_input("✍️ Nhập tay GĐB:")
     if st.button("➕ Thêm thủ công"): update_logic(manual_gdb); st.rerun()
     st.divider()
-    uploaded_file = st.file_uploader("📸 Load ảnh (Đối chiếu màu đỏ)", type=["png", "jpg", "jpeg"])
+    uploaded_file = st.file_uploader("📸 Load ảnh", type=["png", "jpg", "jpeg"])
     
-    if st.button("🔍 QUÉT ẢNH (ƯU TIÊN SỐ ĐỎ)"):
+    if st.button("🔍 QUÉT ẢNH"):
         if uploaded_file:
-            with st.spinner("Đang tách lọc GĐB dựa trên sắc đỏ..."):
+            with st.spinner("Đang tách lọc GĐB..."):
                 img_orig = Image.open(uploaded_file).convert("RGB")
                 img_enh = ImageEnhance.Contrast(img_orig).enhance(2.0)
                 results = load_ocr().readtext(np.array(img_enh))
-                
                 raw_data = []
                 for (bbox, text, prob) in results:
                     clean = "".join([d for d in text if d.isdigit()])
-                    # Lọc theo độ dài 5-6 ký tự chuẩn GĐB
                     if 5 <= len(clean) <= 6:
                         raw_data.append({"val": clean, "x": (bbox[0][0] + bbox[2][0]) / 2, "y": (bbox[0][1] + bbox[2][1]) / 2})
-                
                 if raw_data:
                     df_scan = pd.DataFrame(raw_data)
-                    # Sắp xếp từ trái sang phải, hết hàng mới xuống dòng
                     df_scan['row_group'] = (df_scan['y'] / 50).astype(int)
                     df_scan = df_scan.sort_values(by=['row_group', 'x'])
                     for _, row in df_scan.iterrows(): update_logic(row['val'])
-                    st.success(f"Đã nạp nối tiếp {len(df_scan)} kỳ GĐB!")
+                    st.success(f"Đã nạp {len(df_scan)} kỳ!")
                     st.rerun()
 
     if st.button("❌ RESET DỮ LIỆU"):
@@ -112,7 +108,7 @@ with st.sidebar:
         st.rerun()
     st.sidebar.download_button("💾 Lưu file .Json", json.dumps(st.session_state.db), "bang_tinh_tien.json")
 
-# --- HIỂN THỊ CHÍNH (FULL TABS) ---
+# --- HIỂN THỊ CHÍNH ---
 if st.session_state.db.get("last_gdb_full"):
     gdb_now = st.session_state.db["last_gdb_full"]
     st.subheader(f"🛡️ Kỳ hiện tại: {gdb_now}")
@@ -136,10 +132,21 @@ if st.session_state.db.get("last_gdb_full"):
         dan_d.append({"SO": f"{i:02d}", "DIEM": int(score)})
     df_dan = pd.DataFrame(dan_d).sort_values("DIEM", ascending=False)
 
-    c1, c2 = st.columns(2)
-    with c1: st.text_area("Dàn 1 (49 số):", " ".join(df_dan.head(49)["SO"].tolist()), height=100)
-    with c2: st.text_area("Dàn 2 (64 số):", " ".join(df_dan.head(64)["SO"].tolist()), height=100)
+    # --- PHẦN ĐIỀU CHỈNH SỐ LƯỢNG DÀN ---
+    st.divider()
+    col_input1, col_input2 = st.columns(2)
+    with col_input1:
+        n_dan1 = st.number_input("Số lượng quân Dàn 1:", min_value=1, max_value=100, value=49)
+    with col_input2:
+        n_dan2 = st.number_input("Số lượng quân Dàn 2:", min_value=1, max_value=100, value=64)
 
+    c1, c2 = st.columns(2)
+    with c1: 
+        st.text_area(f"Dàn 1 ({n_dan1} số):", " ".join(df_dan.head(n_dan1)["SO"].tolist()), height=150)
+    with c2: 
+        st.text_area(f"Dàn 2 ({n_dan2} số):", " ".join(df_dan.head(n_dan2)["SO"].tolist()), height=150)
+
+    # --- TABS ---
     tabs = st.tabs(["🕒 Lịch sử", "🎲 Bảng B (Điểm & Thống kê)", "🗂️ Bảng C", "🎲 Bảng D", "📊 Bảng A"])
     with tabs[1]:
         st.subheader("📊 Thống kê Trạng thái Cao điểm nhất")
